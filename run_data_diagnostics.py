@@ -11,7 +11,6 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from src.data_loader import ExcelDataLoader
-from src.measurement_sensitivity_analyzer import MeasurementSensitivityAnalyzer
 import pandas as pd
 
 
@@ -89,65 +88,9 @@ def run_data_diagnostics(data_file: str = None):
     print()
     
     # ============================================================================
-    # STEP 3: SENSITIVITY-BASED DIAGNOSTICS
+    # STEP 3: RECOMMENDATIONS
     # ============================================================================
-    print("STEP 3: Running sensitivity-based diagnostics...")
-    
-    try:
-        # Create sensitivity analyzer
-        sensitivity_analyzer = MeasurementSensitivityAnalyzer(distances, initial_coordinates, fixed_points_info)
-        
-        # Run baseline optimization
-        baseline_result = sensitivity_analyzer.run_baseline_optimization()
-        
-        # Run leave-one-out analysis to identify problematic measurements
-        print("  Running leave-one-out analysis to identify problematic measurements...")
-        sensitivity_results = sensitivity_analyzer.analyze_measurement_sensitivity()
-        
-        # Get measurements that cause optimization failures
-        failed_measurements = []
-        for pair, result in sensitivity_analyzer.sensitivity_results.items():
-            if result['rms_displacement'] == float('inf'):
-                failed_measurements.append({
-                    'pair': pair,
-                    'distance': result['original_distance'],
-                    'error': result.get('error', 'Unknown error')
-                })
-        
-        if failed_measurements:
-            print("\nMEASUREMENTS CAUSING OPTIMIZATION FAILURES:")
-            for failed in failed_measurements:
-                print(f"  {failed['pair'][0]}-{failed['pair'][1]}: {failed['distance']:.3f} - {failed['error']}")
-        
-        # Get measurements with highest impact
-        top_measurements = sensitivity_analyzer.get_top_impactful_measurements(10)
-        print("\nMEASUREMENTS WITH HIGHEST IMPACT (potential errors):")
-        for i, measurement in enumerate(top_measurements[:10], 1):
-            pair = measurement['measurement_pair']
-            print(f"  {i:2d}. {pair[0]}-{pair[1]}: {measurement['original_distance']:.3f} "
-                  f"(RMS displacement: {measurement['rms_displacement']:.6f})")
-        
-        # Run Jacobian analysis for local sensitivity
-        print("\n  Running Jacobian analysis for local sensitivity...")
-        jacobian_results = sensitivity_analyzer.compute_jacobian_sensitivity()
-        
-        # Get measurements with highest local sensitivity
-        top_jacobian = jacobian_results['sensitivities'][:10]
-        print("\nMEASUREMENTS WITH HIGHEST LOCAL SENSITIVITY:")
-        for i, measurement in enumerate(top_jacobian[:10], 1):
-            pair = measurement['measurement_pair']
-            print(f"  {i:2d}. {pair[0]}-{pair[1]}: {measurement['distance']:.3f} "
-                  f"(sensitivity: {measurement['sensitivity']:.6f})")
-        
-    except Exception as e:
-        print(f"❌ Error in sensitivity analysis: {str(e)}")
-    
-    print()
-    
-    # ============================================================================
-    # STEP 4: RECOMMENDATIONS
-    # ============================================================================
-    print("STEP 4: Recommendations...")
+    print("STEP 3: Recommendations...")
     print("\nBASED ON THE ANALYSIS, CONSIDER THE FOLLOWING:")
     
     recommendations = []
@@ -173,14 +116,6 @@ def run_data_diagnostics(data_file: str = None):
     if 'coordinate_outliers' in analysis:
         recommendations.append("• Verify coordinate values for statistical outliers")
     
-    # Check for optimization failures
-    if 'failed_measurements' in locals() and failed_measurements:
-        recommendations.append("• Re-measure distances that cause optimization failures")
-    
-    # Check for high-impact measurements
-    if 'top_measurements' in locals() and top_measurements:
-        recommendations.append("• Focus on re-measuring high-impact measurements first")
-    
     if not recommendations:
         recommendations.append("• No obvious data quality issues detected")
         recommendations.append("• Consider running the complete analysis to see optimization results")
@@ -194,8 +129,7 @@ def run_data_diagnostics(data_file: str = None):
     
     return {
         'loader': loader,
-        'analysis': analysis,
-        'sensitivity_analyzer': sensitivity_analyzer if 'sensitivity_analyzer' in locals() else None
+        'analysis': analysis
     }
 
 
@@ -203,18 +137,18 @@ def main():
     """Main function to run data diagnostics."""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Run data quality diagnostics')
-    parser.add_argument('--data-file', type=str, help='Path to Excel data file')
+    parser = argparse.ArgumentParser(description="Run data quality diagnostics")
+    parser.add_argument("--data_file", type=str, default=None,
+                       help="Path to Excel file with distance measurements and coordinates")
     
     args = parser.parse_args()
     
     try:
-        results = run_data_diagnostics(args.data_file)
-        return 0
+        run_data_diagnostics(args.data_file)
     except Exception as e:
-        print(f"Error during diagnostics: {str(e)}")
-        return 1
+        print(f"Error running diagnostics: {e}")
+        sys.exit(1)
 
 
-if __name__ == '__main__':
-    exit(main()) 
+if __name__ == "__main__":
+    main() 

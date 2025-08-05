@@ -37,8 +37,8 @@ class ExcelDataLoader:
         # Expected headers for distance measurements sheet
         self.expected_distance_headers = ["First point ID", "Second point ID", "Distance", "Status"]
         
-        # Expected headers for coordinates sheet (with fixed point and line group columns)
-        self.expected_coordinate_headers = ["Point ID", "x_guess", "y_guess", "Fixed Point", "Line Group"]
+        # Expected headers for coordinates sheet
+        self.expected_coordinate_headers = ["Point ID", "x_guess", "y_guess", "Fixed Point"]
         
         # Data storage
         self.distances_df = None
@@ -99,72 +99,24 @@ class ExcelDataLoader:
         if self.coordinates_df is None:
             raise ValueError("Data not loaded yet. Call load_data() first.")
         
-        fixed_points = {}
+        fixed_points_info = {}
         
-        # Use the explicit fixed point designation from the "Fixed Point" column
         for _, row in self.coordinates_df.iterrows():
             point_id = row['Point ID']
+            fixed_point = row['Fixed Point']
             
-            # Handle missing data and convert to string for comparison
-            fixed_type_raw = row['Fixed Point']
-            if pd.isna(fixed_type_raw):
-                # Missing data is considered free
-                fixed_points[point_id] = "free"
-            else:
-                # Convert to lowercase string and strip whitespace
-                fixed_type = str(fixed_type_raw).lower().strip()
-                
-                if fixed_type in ['origin', 'o', '0,0']:
-                    fixed_points[point_id] = "origin"
-                elif fixed_type in ['y_axis', 'y', 'y-axis', '0,y']:
-                    fixed_points[point_id] = "y_axis"
+            if pd.notna(fixed_point) and str(fixed_point).strip():
+                fixed_point_str = str(fixed_point).strip().lower()
+                if fixed_point_str in ['origin', 'o']:
+                    fixed_points_info[point_id] = 'origin'
+                elif fixed_point_str in ['y_axis', 'y']:
+                    fixed_points_info[point_id] = 'y_axis'
                 else:
-                    # Anything else (including empty strings, other values) is considered free
-                    fixed_points[point_id] = "free"
+                    fixed_points_info[point_id] = 'free'
+            else:
+                fixed_points_info[point_id] = 'free'
         
-        return fixed_points
-    
-    def get_line_constraints(self) -> List[Dict[str, any]]:
-        """
-        Get information about line constraints from the Line Group column.
-        
-        Returns:
-            List of line constraint dictionaries with keys:
-            - "line_id": The line group identifier
-            - "point_ids": List of point IDs that should lie on the same line
-            - "type": "arbitrary" (for now, could be extended to "horizontal", "vertical")
-        """
-        if self.coordinates_df is None:
-            raise ValueError("Data not loaded yet. Call load_data() first.")
-        
-        line_constraints = []
-        line_groups = {}
-        
-        # Group points by line group
-        for _, row in self.coordinates_df.iterrows():
-            point_id = row['Point ID']
-            line_group = row['Line Group']
-            
-            if pd.notna(line_group) and str(line_group).strip():
-                line_group_str = str(line_group).strip()
-                # Split by comma and handle multiple line groups per point
-                individual_groups = [group.strip() for group in line_group_str.split(',') if group.strip()]
-                
-                for group in individual_groups:
-                    if group not in line_groups:
-                        line_groups[group] = []
-                    line_groups[group].append(point_id)
-        
-        # Create line constraints for groups with 2 or more points
-        for line_id, point_ids in line_groups.items():
-            if len(point_ids) >= 2:
-                line_constraints.append({
-                    "line_id": line_id,
-                    "point_ids": point_ids,
-                    "type": "arbitrary"  # Could be extended to "horizontal", "vertical"
-                })
-        
-        return line_constraints
+        return fixed_points_info
     
     def _load_distances_sheet(self) -> pd.DataFrame:
         """
@@ -234,34 +186,28 @@ class ExcelDataLoader:
             # Read the second sheet (coordinates)
             df = pd.read_excel(self.file_path, sheet_name=1)
             
-            # Use the first 5 columns (including Line Group)
-            if len(df.columns) >= 5:
-                df = df.iloc[:, :5]
+            # Check if we have the expected number of columns
+            if len(df.columns) >= 4:
+                # Use the first 4 columns
+                df = df.iloc[:, :4]
                 # Rename columns to expected headers
                 df.columns = self.expected_coordinate_headers
-            elif len(df.columns) >= 4:
-                # Handle case where Line Group column is missing (backward compatibility)
-                df = df.iloc[:, :4]
-                df.columns = self.expected_coordinate_headers[:4]
-                # Add empty Line Group column
-                df['Line Group'] = ''
             else:
                 raise ValueError(f"Coordinates sheet must have at least 4 columns, got {len(df.columns)}")
             
-            # Validate data types
+            # Validate data types for coordinate columns
             if not df['x_guess'].dtype in ['float64', 'int64']:
                 raise ValueError("x_guess column must contain numeric values")
             if not df['y_guess'].dtype in ['float64', 'int64']:
                 raise ValueError("y_guess column must contain numeric values")
             
-            # Check for missing values (allow missing values in Fixed Point and Line Group columns)
+            # Check for missing values in required columns
             required_columns = ['Point ID', 'x_guess', 'y_guess']
             if df[required_columns].isnull().any().any():
-                raise ValueError("Missing values found in required columns (Point ID, x_guess, y_guess)")
+                raise ValueError("Missing values found in required columns of coordinates sheet")
             
-            # Fill missing values in optional columns
+            # Handle missing values in Fixed Point column
             df['Fixed Point'] = df['Fixed Point'].fillna('')
-            df['Line Group'] = df['Line Group'].fillna('')
             
             return df
             
@@ -275,7 +221,7 @@ class ExcelDataLoader:
         Validate consistency between distance and coordinate data.
         
         Raises:
-            ValueError: If point IDs don't match between sheets
+            ValueError: If data is inconsistent
         """
         # Get all point IDs from both sheets
         distance_points = set()
@@ -285,32 +231,30 @@ class ExcelDataLoader:
         
         coordinate_points = set(self.coordinates_df['Point ID'])
         
-        # Check if all points in distances have corresponding coordinates
-        missing_in_coordinates = distance_points - coordinate_points
-        if missing_in_coordinates:
-            raise ValueError(
-                f"Points found in distances but missing from coordinates: {missing_in_coordinates}"
-            )
+        # Check for points in distances but not in coordinates
+        missing_in_coords = distance_points - coordinate_points
+        if missing_in_coords:
+            raise ValueError(f"Points in distance measurements missing from coordinates: {missing_in_coords}")
         
-        # Check if all points in coordinates are used in distances
-        unused_in_distances = coordinate_points - distance_points
-        if unused_in_distances:
-            print(f"Warning: Points in coordinates but not used in distances: {unused_in_distances}")
+        # Check for points in coordinates but not in distances (this is OK, just warn)
+        unused_points = coordinate_points - distance_points
+        if unused_points:
+            print(f"Warning: Points in coordinates but not in distance measurements: {unused_points}")
     
     def _convert_distances_to_dict(self) -> Dict[Tuple[str, str], float]:
         """
         Convert distances DataFrame to dictionary format.
         
         Returns:
-            Dictionary mapping (point_id1, point_id2) tuples to distances
+            Dictionary mapping (point_id1, point_id2) to distance
         """
         distances = {}
         for _, row in self.distances_df.iterrows():
             point1 = row['First point ID']
             point2 = row['Second point ID']
-            distance = float(row['Distance'])
+            distance = row['Distance']
             
-            # Ensure consistent ordering of point IDs
+            # Ensure consistent ordering (smaller ID first)
             if point1 < point2:
                 key = (point1, point2)
             else:
@@ -325,20 +269,20 @@ class ExcelDataLoader:
         Convert coordinates DataFrame to dictionary format.
         
         Returns:
-            Dictionary mapping point IDs to (x, y) coordinate tuples
+            Dictionary mapping point IDs to (x, y) coordinates
         """
         coordinates = {}
         for _, row in self.coordinates_df.iterrows():
             point_id = row['Point ID']
-            x = float(row['x_guess'])
-            y = float(row['y_guess'])
+            x = row['x_guess']
+            y = row['y_guess']
             coordinates[point_id] = (x, y)
         
         return coordinates
     
     def get_all_point_ids(self) -> List[str]:
         """
-        Get list of all point IDs from the data.
+        Get all point IDs from the data.
         
         Returns:
             List of all point IDs
@@ -346,28 +290,25 @@ class ExcelDataLoader:
         if self.coordinates_df is None:
             raise ValueError("Data not loaded yet. Call load_data() first.")
         
-        return list(self.coordinates_df['Point ID'])
+        return sorted(self.coordinates_df['Point ID'].tolist())
     
     def get_connectivity_info(self) -> Tuple[List[Set[str]], bool]:
         """
-        Analyze connectivity of the distance measurements.
+        Analyze connectivity between points based on distance measurements.
         
         Returns:
-            Tuple of (connected_components, is_fully_connected)
+            Tuple of (connected_components, is_connected)
+            - connected_components: List of sets, each containing point IDs in a connected component
+            - is_connected: True if all points are in a single connected component
         """
         if self.distances_df is None:
             raise ValueError("Data not loaded yet. Call load_data() first.")
         
         # Build adjacency list
         adjacency = {}
-        all_points = set()
-        
         for _, row in self.distances_df.iterrows():
             point1 = row['First point ID']
             point2 = row['Second point ID']
-            
-            all_points.add(point1)
-            all_points.add(point2)
             
             if point1 not in adjacency:
                 adjacency[point1] = set()
@@ -379,17 +320,18 @@ class ExcelDataLoader:
         
         # Find connected components using DFS
         visited = set()
-        connected_components = []
+        components = []
         
-        for point in all_points:
+        for point in adjacency.keys():
             if point not in visited:
                 component = set()
                 self._dfs(point, adjacency, visited, component)
-                connected_components.append(component)
+                components.append(component)
         
-        is_fully_connected = len(connected_components) == 1
+        # Check if all points are connected
+        is_connected = len(components) == 1
         
-        return connected_components, is_fully_connected
+        return components, is_connected
     
     def _dfs(self, node: str, adjacency: Dict[str, Set[str]], 
              visited: Set[str], component: Set[str]):
@@ -398,67 +340,57 @@ class ExcelDataLoader:
         
         Args:
             node: Current node to visit
-            adjacency: Adjacency list representation of the graph
-            visited: Set of already visited nodes
-            component: Set to collect nodes in current component
+            adjacency: Adjacency list representation of graph
+            visited: Set of visited nodes
+            component: Set to add nodes in current component
         """
         visited.add(node)
         component.add(node)
         
-        for neighbor in adjacency.get(node, set()):
-            if neighbor not in visited:
-                self._dfs(neighbor, adjacency, visited, component) 
-
+        if node in adjacency:
+            for neighbor in adjacency[node]:
+                if neighbor not in visited:
+                    self._dfs(neighbor, adjacency, visited, component)
+    
     def analyze_data_quality(self) -> Dict:
         """
-        Perform comprehensive data quality analysis to identify potential issues.
+        Perform comprehensive data quality analysis.
         
         Returns:
-            Dictionary containing data quality analysis results
+            Dictionary containing various data quality metrics and issues
         """
         if self.distances_df is None or self.coordinates_df is None:
             raise ValueError("Data not loaded yet. Call load_data() first.")
         
-        analysis = {
-            'point_consistency': self._check_point_consistency(),
-            'distance_statistics': self._analyze_distance_statistics(),
-            'coordinate_analysis': self._analyze_coordinates(),
-            'connectivity_analysis': self._analyze_connectivity(),
-            'potential_issues': []
-        }
+        analysis = {}
         
-        # Identify potential issues
-        issues = []
+        # Point consistency analysis
+        analysis['point_consistency'] = self._check_point_consistency()
         
-        # Check for duplicate measurements
-        duplicates = self._find_duplicate_measurements()
-        if duplicates:
-            issues.append(f"Found {len(duplicates)} duplicate distance measurements")
-            analysis['duplicate_measurements'] = duplicates
+        # Distance statistics
+        analysis['distance_statistics'] = self._analyze_distance_statistics()
         
-        # Check for very short or very long distances
-        extreme_distances = self._find_extreme_distances()
-        if extreme_distances:
-            issues.append(f"Found {len(extreme_distances)} potentially problematic distances")
-            analysis['extreme_distances'] = extreme_distances
+        # Coordinate analysis
+        analysis['coordinate_analysis'] = self._analyze_coordinates()
         
-        # Check for isolated points
-        isolated_points = self._find_isolated_points()
-        if isolated_points:
-            issues.append(f"Found {len(isolated_points)} points with only one measurement")
-            analysis['isolated_points'] = isolated_points
+        # Connectivity analysis
+        analysis['connectivity'] = self._analyze_connectivity()
         
-        # Check for coordinate outliers
-        coordinate_outliers = self._find_coordinate_outliers()
-        if coordinate_outliers:
-            issues.append(f"Found {len(coordinate_outliers)} coordinate outliers")
-            analysis['coordinate_outliers'] = coordinate_outliers
+        # Find specific issues
+        analysis['duplicate_measurements'] = self._find_duplicate_measurements()
+        analysis['extreme_distances'] = self._find_extreme_distances()
+        analysis['isolated_points'] = self._find_isolated_points()
+        analysis['coordinate_outliers'] = self._find_coordinate_outliers()
         
-        analysis['potential_issues'] = issues
-        return analysis 
-
+        return analysis
+    
     def _check_point_consistency(self) -> Dict:
-        """Check consistency between distance measurements and coordinate data."""
+        """
+        Check consistency between points in distance and coordinate data.
+        
+        Returns:
+            Dictionary with consistency information
+        """
         distance_points = set()
         for _, row in self.distances_df.iterrows():
             distance_points.add(row['First point ID'])
@@ -466,137 +398,145 @@ class ExcelDataLoader:
         
         coordinate_points = set(self.coordinates_df['Point ID'])
         
-        missing_in_coordinates = distance_points - coordinate_points
+        missing_in_coords = distance_points - coordinate_points
         missing_in_distances = coordinate_points - distance_points
         
         return {
-            'points_in_distances_only': list(missing_in_coordinates),
-            'points_in_coordinates_only': list(missing_in_distances),
+            'consistent': len(missing_in_coords) == 0,
+            'missing_in_coordinates': list(missing_in_coords),
+            'missing_in_distances': list(missing_in_distances),
             'total_distance_points': len(distance_points),
-            'total_coordinate_points': len(coordinate_points),
-            'consistent': len(missing_in_coordinates) == 0 and len(missing_in_distances) == 0
+            'total_coordinate_points': len(coordinate_points)
         }
     
     def _analyze_distance_statistics(self) -> Dict:
-        """Analyze distance measurement statistics."""
+        """
+        Analyze statistics of distance measurements.
+        
+        Returns:
+            Dictionary with distance statistics
+        """
         distances = self.distances_df['Distance']
         
         return {
             'count': len(distances),
-            'min': float(distances.min()),
-            'max': float(distances.max()),
-            'mean': float(distances.mean()),
-            'median': float(distances.median()),
-            'std': float(distances.std()),
-            'range': float(distances.max() - distances.min())
+            'mean': distances.mean(),
+            'std': distances.std(),
+            'min': distances.min(),
+            'max': distances.max(),
+            'median': distances.median()
         }
     
     def _analyze_coordinates(self) -> Dict:
-        """Analyze coordinate data."""
+        """
+        Analyze coordinate data.
+        
+        Returns:
+            Dictionary with coordinate analysis
+        """
         x_coords = self.coordinates_df['x_guess']
         y_coords = self.coordinates_df['y_guess']
         
         return {
             'x_stats': {
-                'min': float(x_coords.min()),
-                'max': float(x_coords.max()),
-                'mean': float(x_coords.mean()),
-                'std': float(x_coords.std())
+                'mean': x_coords.mean(),
+                'std': x_coords.std(),
+                'min': x_coords.min(),
+                'max': x_coords.max()
             },
             'y_stats': {
-                'min': float(y_coords.min()),
-                'max': float(y_coords.max()),
-                'mean': float(y_coords.mean()),
-                'std': float(y_coords.std())
+                'mean': y_coords.mean(),
+                'std': y_coords.std(),
+                'min': y_coords.min(),
+                'max': y_coords.max()
             },
-            'coordinate_range': {
-                'x_range': float(x_coords.max() - x_coords.min()),
-                'y_range': float(y_coords.max() - y_coords.min())
+            'fixed_points': {
+                'origin': len(self.coordinates_df[self.coordinates_df['Fixed Point'].str.lower().isin(['origin', 'o'])])
             }
         }
     
     def _analyze_connectivity(self) -> Dict:
-        """Analyze the connectivity graph of measurements."""
-        # Build adjacency list
-        adjacency = {}
-        for _, row in self.distances_df.iterrows():
-            point1 = row['First point ID']
-            point2 = row['Second point ID']
-            
-            if point1 not in adjacency:
-                adjacency[point1] = set()
-            if point2 not in adjacency:
-                adjacency[point2] = set()
-            
-            adjacency[point1].add(point2)
-            adjacency[point2].add(point1)
+        """
+        Analyze connectivity between points.
         
-        # Analyze connectivity
-        point_degrees = {point: len(neighbors) for point, neighbors in adjacency.items()}
+        Returns:
+            Dictionary with connectivity information
+        """
+        components, is_connected = self.get_connectivity_info()
         
         return {
-            'total_points': len(adjacency),
-            'total_measurements': len(self.distances_df),
-            'average_degree': sum(point_degrees.values()) / len(point_degrees) if point_degrees else 0,
-            'min_degree': min(point_degrees.values()) if point_degrees else 0,
-            'max_degree': max(point_degrees.values()) if point_degrees else 0,
-            'point_degrees': point_degrees
+            'is_connected': is_connected,
+            'num_components': len(components),
+            'component_sizes': [len(comp) for comp in components],
+            'largest_component_size': max(len(comp) for comp in components) if components else 0
         }
     
     def _find_duplicate_measurements(self) -> List[Dict]:
-        """Find duplicate or near-duplicate distance measurements."""
-        duplicates = []
+        """
+        Find duplicate distance measurements.
         
-        # Check for exact duplicates
+        Returns:
+            List of duplicate measurement dictionaries
+        """
+        duplicates = []
         seen_pairs = set()
+        
         for _, row in self.distances_df.iterrows():
-            point1, point2 = row['First point ID'], row['Second point ID']
+            point1 = row['First point ID']
+            point2 = row['Second point ID']
             distance = row['Distance']
             
-            # Normalize pair order
-            if point1 > point2:
-                point1, point2 = point2, point1
+            # Create consistent pair key
+            if point1 < point2:
+                pair_key = (point1, point2)
+            else:
+                pair_key = (point2, point1)
             
-            pair_key = (point1, point2, distance)
             if pair_key in seen_pairs:
                 duplicates.append({
-                    'type': 'exact_duplicate',
                     'point1': point1,
                     'point2': point2,
                     'distance': distance
                 })
-            seen_pairs.add(pair_key)
+            else:
+                seen_pairs.add(pair_key)
         
         return duplicates
     
     def _find_extreme_distances(self) -> List[Dict]:
-        """Find distances that are unusually short or long."""
+        """
+        Find distance measurements that are statistical outliers.
+        
+        Returns:
+            List of extreme distance dictionaries
+        """
         distances = self.distances_df['Distance']
-        mean_dist = distances.mean()
-        std_dist = distances.std()
+        mean = distances.mean()
+        std = distances.std()
         
         extreme_distances = []
-        
         for _, row in self.distances_df.iterrows():
             distance = row['Distance']
-            point1, point2 = row['First point ID'], row['Second point ID']
+            z_score = abs((distance - mean) / std) if std > 0 else 0
             
-            # Check if distance is more than 3 standard deviations from mean
-            z_score = abs(distance - mean_dist) / std_dist if std_dist > 0 else 0
-            
-            if z_score > 3:
+            if z_score > 2.0:  # More than 2 standard deviations
                 extreme_distances.append({
-                    'point1': point1,
-                    'point2': point2,
+                    'point1': row['First point ID'],
+                    'point2': row['Second point ID'],
                     'distance': distance,
                     'z_score': z_score,
-                    'type': 'very_short' if distance < mean_dist else 'very_long'
+                    'type': 'high' if distance > mean else 'low'
                 })
         
         return extreme_distances
     
     def _find_isolated_points(self) -> List[str]:
-        """Find points that have only one measurement."""
+        """
+        Find points that have only one distance measurement.
+        
+        Returns:
+            List of isolated point IDs
+        """
         point_counts = {}
         
         for _, row in self.distances_df.iterrows():
@@ -609,7 +549,12 @@ class ExcelDataLoader:
         return [point for point, count in point_counts.items() if count == 1]
     
     def _find_coordinate_outliers(self) -> List[Dict]:
-        """Find coordinate values that are statistical outliers."""
+        """
+        Find coordinate values that are statistical outliers.
+        
+        Returns:
+            List of coordinate outlier dictionaries
+        """
         x_coords = self.coordinates_df['x_guess']
         y_coords = self.coordinates_df['y_guess']
         
@@ -617,15 +562,14 @@ class ExcelDataLoader:
         y_mean, y_std = y_coords.mean(), y_coords.std()
         
         outliers = []
-        
         for _, row in self.coordinates_df.iterrows():
             point_id = row['Point ID']
             x, y = row['x_guess'], row['y_guess']
             
-            x_z_score = abs(x - x_mean) / x_std if x_std > 0 else 0
-            y_z_score = abs(y - y_mean) / y_std if y_std > 0 else 0
+            x_z_score = abs((x - x_mean) / x_std) if x_std > 0 else 0
+            y_z_score = abs((y - y_mean) / y_std) if y_std > 0 else 0
             
-            if x_z_score > 3 or y_z_score > 3:
+            if x_z_score > 2.0 or y_z_score > 2.0:
                 outliers.append({
                     'point_id': point_id,
                     'x': x,
@@ -637,47 +581,54 @@ class ExcelDataLoader:
         return outliers
     
     def print_data_quality_report(self):
-        """Print a comprehensive data quality report."""
-        analysis = self.analyze_data_quality()
+        """
+        Print a comprehensive data quality report.
+        """
+        if self.distances_df is None or self.coordinates_df is None:
+            print("No data loaded. Call load_data() first.")
+            return
         
-        print("\n" + "="*80)
-        print("DATA QUALITY ANALYSIS REPORT")
-        print("="*80)
+        print("\n" + "="*60)
+        print("DATA QUALITY REPORT")
+        print("="*60)
+        
+        # Basic statistics
+        print(f"Distance measurements: {len(self.distances_df)}")
+        print(f"Points: {len(self.coordinates_df)}")
         
         # Point consistency
-        consistency = analysis['point_consistency']
-        print("\nPOINT CONSISTENCY:")
-        if consistency['consistent']:
-            print("  ✅ All points are consistent between distance and coordinate data")
-        else:
-            print("  ❌ Point consistency issues found:")
-            if consistency['points_in_distances_only']:
-                print(f"    Points in distances but missing from coordinates: {consistency['points_in_distances_only']}")
-            if consistency['points_in_coordinates_only']:
-                print(f"    Points in coordinates but not used in distances: {consistency['points_in_coordinates_only']}")
+        consistency = self._check_point_consistency()
+        print(f"\nPoint consistency: {'✓' if consistency['consistent'] else '✗'}")
+        if not consistency['consistent']:
+            print(f"  Missing in coordinates: {consistency['missing_in_coordinates']}")
         
         # Distance statistics
-        dist_stats = analysis['distance_statistics']
-        print(f"\nDISTANCE STATISTICS:")
-        print(f"  Total measurements: {dist_stats['count']}")
-        print(f"  Range: {dist_stats['min']:.3f} - {dist_stats['max']:.3f}")
+        dist_stats = self._analyze_distance_statistics()
+        print(f"\nDistance statistics:")
         print(f"  Mean: {dist_stats['mean']:.3f}")
-        print(f"  Standard deviation: {dist_stats['std']:.3f}")
+        print(f"  Std: {dist_stats['std']:.3f}")
+        print(f"  Range: {dist_stats['min']:.3f} - {dist_stats['max']:.3f}")
         
-        # Connectivity analysis
-        connectivity = analysis['connectivity_analysis']
-        print(f"\nCONNECTIVITY ANALYSIS:")
-        print(f"  Total points: {connectivity['total_points']}")
-        print(f"  Average connections per point: {connectivity['average_degree']:.1f}")
-        print(f"  Min connections: {connectivity['min_degree']}")
-        print(f"  Max connections: {connectivity['max_degree']}")
+        # Connectivity
+        connectivity = self._analyze_connectivity()
+        print(f"\nConnectivity: {'✓' if connectivity['is_connected'] else '✗'}")
+        if not connectivity['is_connected']:
+            print(f"  Components: {connectivity['num_components']}")
+            print(f"  Component sizes: {connectivity['component_sizes']}")
         
-        # Potential issues
-        if analysis['potential_issues']:
-            print(f"\nPOTENTIAL ISSUES FOUND:")
-            for issue in analysis['potential_issues']:
-                print(f"  ⚠️  {issue}")
-        else:
-            print(f"\n✅ No obvious data quality issues detected")
+        # Issues
+        analysis = self.analyze_data_quality()
         
-        print("\n" + "="*80) 
+        if analysis['duplicate_measurements']:
+            print(f"\nDuplicate measurements: {len(analysis['duplicate_measurements'])}")
+        
+        if analysis['extreme_distances']:
+            print(f"\nExtreme distances: {len(analysis['extreme_distances'])}")
+        
+        if analysis['isolated_points']:
+            print(f"\nIsolated points: {len(analysis['isolated_points'])}")
+        
+        if analysis['coordinate_outliers']:
+            print(f"\nCoordinate outliers: {len(analysis['coordinate_outliers'])}")
+        
+        print("\n" + "="*60) 

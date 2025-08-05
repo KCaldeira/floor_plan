@@ -52,8 +52,7 @@ floor_plan/
 │   ├── data_loader.py
 │   ├── visualization.py
 │   ├── output_analyzer.py
-│   ├── output_manager.py
-│   └── measurement_sensitivity_analyzer.py
+│   └── output_manager.py
 ├── data/
 │   ├── sample_measurements.xlsx
 │   ├── flexible_example.xlsx
@@ -65,8 +64,7 @@ floor_plan/
 └── examples/
     ├── simple_example.py
     ├── flexible_example.py
-    ├── enhanced_example.py
-    └── sensitivity_analysis_example.py
+    └── enhanced_example.py
 ```
 
 ## Key Components
@@ -75,7 +73,7 @@ floor_plan/
 - Implements nonlinear least squares optimization
 - Uses scipy.optimize for minimization
 - Handles missing distance measurements
-- Supports initial guess refinement
+- Optimizes both x and y coordinates simultaneously
 
 ### Distance Calculator
 - Computes Euclidean distances between points
@@ -99,12 +97,7 @@ floor_plan/
 - Calculates per-point error statistics
 - Identifies distance measurements with highest errors
 
-### Measurement Sensitivity Analyzer
-- Analyzes which distance measurements have the greatest impact on final coordinates
-- Systematically removes each measurement and re-optimizes to measure impact
-- Ranks measurements by their effect on coordinate displacement
-- Provides detailed analysis of measurement importance
-- Exports sensitivity analysis results to Excel format
+
 
 ## Input Data Format
 
@@ -203,29 +196,7 @@ analyzer.save_enhanced_output(enhanced_distances, enhanced_coordinates, "enhance
 analyzer.print_enhanced_summary(enhanced_distances, enhanced_coordinates)
 ```
 
-### Sensitivity Analysis Example
 
-```python
-from src.measurement_sensitivity_analyzer import MeasurementSensitivityAnalyzer
-
-# Create sensitivity analyzer
-analyzer = MeasurementSensitivityAnalyzer(distances, initial_coordinates, fixed_points_info)
-
-# Run baseline optimization
-baseline_result = analyzer.run_baseline_optimization()
-
-# Analyze measurement sensitivity
-sensitivity_results = analyzer.analyze_measurement_sensitivity()
-
-# Get top impactful measurements
-top_measurements = analyzer.get_top_impactful_measurements(10)
-
-# Print summary
-analyzer.print_impact_summary(top_n=15)
-
-# Export results
-analyzer.export_sensitivity_results("sensitivity_analysis.xlsx")
-```
 
 ### Enhanced Output Features
 

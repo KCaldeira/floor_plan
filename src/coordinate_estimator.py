@@ -257,7 +257,7 @@ class CoordinateEstimator:
         result = optimize.least_squares(
             self._objective_function,
             initial_vector,
-            method='lm',  # Levenberg-Marquardt algorithm
+            method='trf',  # Trust Region Reflective algorithm
             max_nfev=max_iterations,
             ftol=tolerance,
             xtol=tolerance
@@ -269,16 +269,24 @@ class CoordinateEstimator:
         # Calculate error metrics
         error_metrics = self._calculate_error_metrics(final_coordinates)
         
+        # Handle different optimization methods that have different attributes
+        optimization_info = {
+            'success': result.success,
+            'nfev': result.nfev,
+            'cost': result.cost,
+            'message': result.message
+        }
+        
+        # Add iteration count if available (not available for 'trf' method)
+        if hasattr(result, 'nit'):
+            optimization_info['nit'] = result.nit
+        else:
+            optimization_info['nit'] = 'N/A'  # Not available for TRF method
+        
         return {
             'coordinates': final_coordinates,
             'error_metrics': error_metrics,
-            'optimization_info': {
-                'success': result.success,
-                'nit': result.nit,
-                'nfev': result.nfev,
-                'cost': result.cost,
-                'message': result.message
-            }
+            'optimization_info': optimization_info
         }
     
     def _calculate_error_metrics(self, coordinates: Dict[str, Tuple[float, float]]) -> Dict[str, float]:

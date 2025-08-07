@@ -74,6 +74,8 @@ floor_plan/
 - Uses scipy.optimize for minimization
 - Handles missing distance measurements
 - Optimizes both x and y coordinates simultaneously
+- Supports line orientation constraints (H/V) with adjustable weighting
+- Applies measurement weights to both distance errors and line constraints
 
 ### Distance Calculator
 - Computes Euclidean distances between points
@@ -108,7 +110,9 @@ The project expects input data in Excel (.xlsx) format with two sheets:
 - **Column B**: Second point ID (alphanumeric) 
 - **Column C**: Distance between the two points
 - **Column D**: Status (optional - rows with "ignore" in this column will be excluded)
-- **Headers**: "First point ID", "Second point ID", "Distance", "Status"
+- **Column E**: Line Orientation (optional - "H" for horizontal, "V" for vertical)
+- **Column F**: Weight (optional - numeric value for measurement weight, defaults to 1.0)
+- **Headers**: "First point ID", "Second point ID", "Distance", "Status", "Line Orientation", "Weight"
 
 ### Sheet 2: Initial Coordinates
 - **Column A**: Point ID (alphanumeric)
@@ -126,10 +130,14 @@ The project expects input data in Excel (.xlsx) format with two sheets:
 
 ```
 Sheet 1: Distances
-A1: "First point ID"    B1: "Second point ID"    C1: "Distance"    D1: "Status"
-A2: "A"                 B2: "B"                  C2: 5.0          D2: (empty)
-A3: "B"                 B3: "C"                  C3: 3.0          D3: "ignore"
-A4: "A"                 B4: "C"                  C4: 4.0          D4: (empty)
+A1: "First point ID"    B1: "Second point ID"    C1: "Distance"    D1: "Status"    E1: "Line Orientation"    F1: "Weight"
+A2: "A"                 B2: "B"                  C2: 5.0          D2: (empty)     E2: "H"                  F2: 1.0
+A3: "B"                 B3: "C"                  C3: 3.0          D3: "ignore"    E3: (empty)             F3: 1.0
+A4: "A"                 B4: "C"                  C4: 4.0          D4: (empty)     E4: "V"                  F4: 2.0
+A5: "D"                 B5: "E"                  C5: (empty)      D5: (empty)     E5: "H"                  F5: (empty)
+A6: "F"                 B6: "G"                  C6: (empty)      D6: (empty)     E6: "V"                  F6: (empty)
+
+*Note: Rows A5 and A6 are structural lines - they enforce horizontal/vertical alignment without distance measurements.*
 
 Sheet 2: Initial Coordinates
 A1: "Point ID"    B1: "x_guess"    C1: "y_guess"    D1: "Fixed Point"
@@ -147,6 +155,25 @@ A4: "B"           B4: 0.0          C4: 5.0          D4: "y_axis"
 - Rows with "ignore" (case-insensitive) in the Status column will be excluded from processing
 - Empty cells or any other value in the Status column will be included
 - This allows you to easily exclude problematic measurements without deleting them
+
+**Note:** The "Line Orientation" column in the distances sheet is optional:
+- "H" (case-insensitive, spaces removed) - Adds horizontal line constraint (y-coordinates should be equal)
+- "V" (case-insensitive, spaces removed) - Adds vertical line constraint (x-coordinates should be equal)
+- Any other values (including empty cells) are ignored
+- Line orientation constraints are added as penalties to the optimization objective function
+- **Structural lines**: You can add rows with missing distance values (empty cells) but with H/V line orientation to enforce structural alignment without distance measurements
+
+**Note:** The "Weight" column in the distances sheet is optional:
+- Numeric values (positive) - Weight applied to both distance error and line orientation penalty for this measurement
+- Missing values or empty cells default to weight 1.0
+- Higher weights give more importance to that measurement in the optimization
+- Weights are applied to both the distance error and any line orientation penalties for the same measurement
+
+**Note:** Line constraint weighting can be adjusted via command line:
+- Use `--line-weight` parameter to increase weighting on horizontal (H) and vertical (V) line constraints
+- Default value is 1.0 (no additional weighting)
+- Higher values (e.g., 5.0, 10.0) will enforce stricter alignment of horizontal and vertical lines
+- This is useful when you want to ensure walls and other structural elements are properly aligned
 
 ## Usage
 
@@ -175,6 +202,22 @@ visualizer.save_plot(fig1, "initial_coordinates.png")
 final_coordinates = result['coordinates']
 error_metrics = result['error_metrics']
 print(f"Output directory: {visualizer.get_output_directory()}")
+```
+
+### Command Line Usage
+
+```bash
+# Run with default settings
+python run_analysis.py
+
+# Run with custom data file
+python run_analysis.py data/my_data.xlsx
+
+# Run with increased line constraint weighting
+python run_analysis.py data/my_data.xlsx --line-weight 5.0
+
+# Run with high line constraint weighting for strict alignment
+python run_analysis.py data/my_data.xlsx --line-weight 10.0
 ```
 
 ### Enhanced Output Example
@@ -216,6 +259,12 @@ The enhanced output provides:
 - RMS error for all measurements involving each point
 - Points sorted alphabetically
 
+**Summary Report:**
+- **Width measurements**: Distance from A to W, and sum of J-K + L-M + N-O distances
+- **Length measurements**: Distance from A to J, and sum of K-L + M-N + O-W distances  
+- **Area calculation**: Area contained within the perimeter A-B-C-D-E-F-G-H-I-J-K-L-M3-M4-W-A
+- Formatted Excel output with proper formatting and units
+
 ## Installation
 
 1. Clone the repository:
@@ -255,8 +304,10 @@ output/
 │   ├── initial_coordinates.png
 │   ├── optimized_coordinates.png
 │   ├── coordinate_comparison.png
-│   ├── error_analysis.png
-│   └── enhanced_analysis.xlsx
+│   ├── coordinates_with_distances.png
+│   ├── enhanced_analysis.xlsx
+│   ├── summary_report.xlsx
+│   └── initial_guess_discrepancies.xlsx
 └── run_20250802_103015/
     └── ...
 ```
@@ -266,6 +317,7 @@ output/
 The enhanced analysis generates:
 - **Enhanced Distances sheet**: Original + optimized distances + distance errors
 - **Enhanced Coordinates sheet**: Original + optimized coordinates + error metrics
+- **Summary Report**: Floor plan width, length, and area statistics
 - **Visualizations**: Initial, optimized, comparison, and error analysis plots
 
 ### Output Management Utilities

@@ -35,7 +35,7 @@ class ExcelDataLoader:
         self.file_path = file_path
         
         # Expected headers for distance measurements sheet
-        self.expected_distance_headers = ["First point ID", "Second point ID", "Distance", "Status"]
+        self.expected_distance_headers = ["First point ID", "Second point ID", "Distance", "Status", "Line Orientation", "Weight"]
         
         # Expected headers for coordinates sheet
         self.expected_coordinate_headers = ["Point ID", "x_guess", "y_guess", "Fixed Point"]
@@ -118,6 +118,107 @@ class ExcelDataLoader:
         
         return fixed_points_info
     
+    def get_line_orientations(self) -> Dict[Tuple[str, str], str]:
+        """
+        Get line orientation information for all measurements and structural lines.
+        
+        Returns:
+            Dictionary mapping (point_id1, point_id2) to line orientation:
+            - "H": Horizontal line constraint
+            - "V": Vertical line constraint
+            - Empty string: No line orientation constraint
+            
+        Note: This includes both distance measurements and structural lines without distances.
+        """
+        if self.distances_df is None:
+            raise ValueError("Data not loaded yet. Call load_data() first.")
+        
+        # Load the original distances sheet to get all rows (including structural lines)
+        try:
+            original_df = pd.read_excel(self.file_path, sheet_name=0)
+            
+            # Handle columns - need at least 4, optionally 5 or 6
+            if len(original_df.columns) >= 4:
+                if len(original_df.columns) >= 6:
+                    # Use first 6 columns (including Line Orientation and Weight)
+                    original_df = original_df.iloc[:, :6]
+                    original_df.columns = self.expected_distance_headers
+                elif len(original_df.columns) >= 5:
+                    # Use first 5 columns (including Line Orientation, no Weight)
+                    original_df = original_df.iloc[:, :5]
+                    original_df.columns = self.expected_distance_headers[:5]
+                    # Add default Weight column
+                    original_df['Weight'] = 1.0
+                else:
+                    # Use first 4 columns (no Line Orientation, no Weight)
+                    original_df = original_df.iloc[:, :4]
+                    original_df.columns = self.expected_distance_headers[:4]
+                    # Add empty Line Orientation column and default Weight column
+                    original_df['Line Orientation'] = ''
+                    original_df['Weight'] = 1.0
+            else:
+                raise ValueError(f"Distances sheet must have at least 4 columns, got {len(original_df.columns)}")
+            
+            # Filter out rows with "ignore" in the Status column (case-insensitive)
+            if 'Status' in original_df.columns:
+                # Convert Status column to string and handle missing values
+                original_df['Status'] = original_df['Status'].fillna('').astype(str)
+                # Filter out rows where Status contains "ignore" (case-insensitive)
+                original_df = original_df[~original_df['Status'].str.lower().str.contains('ignore', na=False)]
+            
+            # Process Line Orientation column
+            if 'Line Orientation' in original_df.columns:
+                # Convert to string, remove spaces, convert to uppercase
+                original_df['Line Orientation'] = original_df['Line Orientation'].fillna('').astype(str).str.replace(' ', '').str.upper()
+                # Keep only 'H' and 'V' values, ignore others
+                original_df['Line Orientation'] = original_df['Line Orientation'].apply(lambda x: x if x in ['H', 'V'] else '')
+            
+        except Exception as e:
+            raise ValueError(f"Error reading original distances sheet for line orientations: {str(e)}")
+        
+        line_orientations = {}
+        for _, row in original_df.iterrows():
+            point1 = row['First point ID']
+            point2 = row['Second point ID']
+            orientation = row.get('Line Orientation', '')
+            
+            # Ensure consistent ordering (smaller ID first)
+            if point1 < point2:
+                key = (point1, point2)
+            else:
+                key = (point2, point1)
+            
+            line_orientations[key] = orientation
+        
+        return line_orientations
+    
+    def get_weights(self) -> Dict[Tuple[str, str], float]:
+        """
+        Get weight information for distance measurements.
+        
+        Returns:
+            Dictionary mapping (point_id1, point_id2) to weight value.
+            Default weight is 1.0 if not specified.
+        """
+        if self.distances_df is None:
+            raise ValueError("Data not loaded yet. Call load_data() first.")
+        
+        weights = {}
+        for _, row in self.distances_df.iterrows():
+            point1 = row['First point ID']
+            point2 = row['Second point ID']
+            weight = row.get('Weight', 1.0)
+            
+            # Ensure consistent ordering (smaller ID first)
+            if point1 < point2:
+                key = (point1, point2)
+            else:
+                key = (point2, point1)
+            
+            weights[key] = weight
+        
+        return weights
+    
     def _load_distances_sheet(self) -> pd.DataFrame:
         """
         Load and validate the distances sheet.
@@ -132,11 +233,25 @@ class ExcelDataLoader:
             # Read the first sheet (distances)
             df = pd.read_excel(self.file_path, sheet_name=0)
             
-            # Only use the first 4 columns (ignore any additional columns)
+            # Handle columns - need at least 4, optionally 5 or 6
             if len(df.columns) >= 4:
-                df = df.iloc[:, :4]
-                # Rename columns to expected headers
-                df.columns = self.expected_distance_headers
+                if len(df.columns) >= 6:
+                    # Use first 6 columns (including Line Orientation and Weight)
+                    df = df.iloc[:, :6]
+                    df.columns = self.expected_distance_headers
+                elif len(df.columns) >= 5:
+                    # Use first 5 columns (including Line Orientation, no Weight)
+                    df = df.iloc[:, :5]
+                    df.columns = self.expected_distance_headers[:5]
+                    # Add default Weight column
+                    df['Weight'] = 1.0
+                else:
+                    # Use first 4 columns (no Line Orientation, no Weight)
+                    df = df.iloc[:, :4]
+                    df.columns = self.expected_distance_headers[:4]
+                    # Add empty Line Orientation column and default Weight column
+                    df['Line Orientation'] = ''
+                    df['Weight'] = 1.0
             else:
                 raise ValueError(f"Distances sheet must have at least 4 columns, got {len(df.columns)}")
             
@@ -157,13 +272,45 @@ class ExcelDataLoader:
                 raise ValueError("Distance column must contain numeric values")
             
             # Check for missing values in required columns (excluding Status column)
-            required_columns = ['First point ID', 'Second point ID', 'Distance']
+            required_columns = ['First point ID', 'Second point ID']
             if df[required_columns].isnull().any().any():
                 raise ValueError("Missing values found in required columns of distances sheet")
+            
+            # Allow missing distance values for structural lines (line orientation constraints only)
+            # Filter out rows with missing distances for distance optimization
+            df_with_distances = df[df['Distance'].notna()]
+            df_structural_only = df[df['Distance'].isna()]
+            
+            if len(df_structural_only) > 0:
+                print(f"Found {len(df_structural_only)} structural lines without distance measurements")
+                # Check that structural lines have line orientation specified
+                structural_with_orientation = df_structural_only[df_structural_only['Line Orientation'].isin(['H', 'V'])]
+                if len(structural_with_orientation) != len(df_structural_only):
+                    print(f"Warning: {len(df_structural_only) - len(structural_with_orientation)} structural lines without H/V orientation")
+            
+            # Use only rows with valid distances for distance optimization
+            df = df_with_distances
             
             # Check for negative distances
             if (df['Distance'] <= 0).any():
                 raise ValueError("All distances must be positive")
+            
+            # Process Line Orientation column
+            if 'Line Orientation' in df.columns:
+                # Convert to string, remove spaces, convert to uppercase
+                df['Line Orientation'] = df['Line Orientation'].fillna('').astype(str).str.replace(' ', '').str.upper()
+                # Keep only 'H' and 'V' values, ignore others
+                df['Line Orientation'] = df['Line Orientation'].apply(lambda x: x if x in ['H', 'V'] else '')
+            
+            # Process Weight column
+            if 'Weight' in df.columns:
+                # Fill missing values with default weight of 1.0
+                df['Weight'] = df['Weight'].fillna(1.0)
+                # Validate that weights are numeric and positive
+                if not df['Weight'].dtype in ['float64', 'int64']:
+                    raise ValueError("Weight column must contain numeric values")
+                if (df['Weight'] <= 0).any():
+                    raise ValueError("All weights must be positive")
             
             return df
             

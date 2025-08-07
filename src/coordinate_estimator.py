@@ -27,7 +27,11 @@ class CoordinateEstimator:
     
     def __init__(self, distances: Dict[Tuple[str, str], float], 
                  initial_coordinates: Dict[str, Tuple[float, float]],
-                 fixed_points_info: Optional[Dict[str, str]] = None):
+                 fixed_points_info: Optional[Dict[str, str]] = None,
+                 line_orientations: Optional[Dict[Tuple[str, str], str]] = None,
+                 line_orientation_weight: float = 1.0,
+                 enable_line_orientation: bool = True,
+                 weights: Optional[Dict[Tuple[str, str], float]] = None):
         """
         Initialize the coordinate estimator.
         
@@ -36,10 +40,28 @@ class CoordinateEstimator:
             initial_coordinates: Dictionary mapping point IDs to initial (x, y) coordinates
             fixed_points_info: Optional dictionary mapping point IDs to constraint types:
                               "origin", "y_axis", or "free"
+            line_orientations: Optional dictionary mapping (point_id1, point_id2) to line orientation:
+                              "H" for horizontal, "V" for vertical, empty string for none
+            line_orientation_weight: Weight for line orientation penalties (default: 1.0)
+            enable_line_orientation: Whether to enable line orientation constraints (default: True)
+            weights: Optional dictionary mapping (point_id1, point_id2) to weight values.
+                    Default weight is 1.0 if not specified.
         """
         self.distances = distances
         self.initial_coordinates = initial_coordinates
         self.distance_calculator = DistanceCalculator()
+        
+        # Line orientation parameters
+        self.line_orientations = line_orientations or {}
+        self.line_orientation_weight = line_orientation_weight
+        self.enable_line_orientation = enable_line_orientation
+        
+        # Weights for measurements
+        self.weights = weights or {}
+        # Set default weight of 1.0 for any measurement not in weights
+        for pair in self.distances.keys():
+            if pair not in self.weights:
+                self.weights[pair] = 1.0
         
         # Extract point IDs and determine fixed points
         self.point_ids = self._extract_point_ids()
@@ -151,13 +173,14 @@ class CoordinateEstimator:
         Objective function for the optimization.
         
         This function calculates the errors between measured and calculated distances
-        for all distance measurements. The optimization minimizes the sum of squared errors.
+        for all distance measurements, plus line orientation penalties.
+        The optimization minimizes the sum of squared errors.
         
         Args:
             coords_vector: Flattened array of free coordinates [x1, y1, x2, y2, ...]
             
         Returns:
-            Array of errors for each measured distance
+            Array of errors for each measured distance plus line orientation penalties
         """
         # Reconstruct the full coordinate dictionary
         coordinates = self._reconstruct_coordinates(coords_vector)
@@ -178,7 +201,35 @@ class CoordinateEstimator:
             
             # Calculate the error (measured - calculated)
             error = measured_distance - calculated_distance
-            errors.append(error)
+            
+            # Apply weight to the error
+            weight = self.weights.get(pair, 1.0)
+            weighted_error = error * weight
+            errors.append(weighted_error)
+        
+        # Add line orientation penalties if enabled
+        if self.enable_line_orientation and self.line_orientations:
+            for pair, orientation in self.line_orientations.items():
+                if orientation in ['H', 'V']:
+                    point1_id, point2_id = pair
+                    
+                    # Get coordinates for both points
+                    point1_coords = coordinates[point1_id]
+                    point2_coords = coordinates[point2_id]
+                    
+                    # Calculate line orientation penalty
+                    if orientation == 'H':
+                        # Horizontal line: penalize y-coordinate differences
+                        penalty = self.line_orientation_weight * (point1_coords[1] - point2_coords[1])
+                    else:  # orientation == 'V'
+                        # Vertical line: penalize x-coordinate differences
+                        penalty = self.line_orientation_weight * (point1_coords[0] - point2_coords[0])
+                    
+                    # Apply weight to the line orientation penalty
+                    # For structural lines without distance measurements, use default weight of 1.0
+                    weight = self.weights.get(pair, 1.0)
+                    weighted_penalty = penalty * weight
+                    errors.append(weighted_penalty)
         
         return np.array(errors)
     

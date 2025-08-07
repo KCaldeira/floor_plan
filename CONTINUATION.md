@@ -59,9 +59,11 @@ minimize Σ(dᵢⱼ_measured - dᵢⱼ_calculated)²
 10. ✅ Remove leave-one-out sensitivity analysis (simplified project)
 11. ✅ Remove line constraint functionality (further simplified project)
 12. ✅ Simplified to full optimization only (removed x-only and y-only options)
-13. 🔄 Develop comprehensive test suite
-14. Add more robust error handling and validation
-15. Implement advanced visualization features
+13. ✅ Added line orientation constraints (H/V) to optimization
+14. ✅ Added measurement weights to optimization
+15. 🔄 Develop comprehensive test suite
+15. Add more robust error handling and validation
+16. Implement advanced visualization features
 
 ## Debugging and Problem-Solving Principles
 
@@ -192,6 +194,8 @@ When proposing changes or fixes:
 - ✅ Simplified project by removing leave-one-out analysis
 - ✅ Simplified project by removing line constraint functionality
 - ✅ Simplified to full optimization only (removed x-only and y-only options)
+- ✅ Line orientation constraints (H/V) integrated into optimization
+- ✅ Measurement weights integrated into optimization
 - 🔄 Comprehensive test coverage
 - 🔄 Robust error handling
 - 🔄 Performance optimization for larger datasets
@@ -210,12 +214,26 @@ When proposing changes or fixes:
 - ✅ Simplified project by removing leave-one-out sensitivity analysis
 - ✅ Simplified project by removing line constraint functionality
 - ✅ Simplified to full optimization only (removed x-only and y-only options)
+- ✅ Added line orientation constraints (H/V) to optimization
+- ✅ Added measurement weights to optimization
+- ✅ Added command line parameter for line constraint weighting (--line-weight)
+- ✅ Added summary report generation with width, length, and area calculations
 
 **Next Session Goals**:
-- Develop comprehensive test suite
+- Develop comprehensive test suite using real data (not sample data)
 - Add more robust error handling
 - Implement advanced visualization features
 - Performance optimization for larger datasets
+- Test structural lines functionality with real data
+
+## Testing Preferences
+
+**User Preference**: The user prefers to test using real data rather than creating sample test data. This means:
+- Use existing real data files (e.g., `data/50_e_1_st_measurements.xlsx`) for testing
+- Avoid creating artificial test datasets
+- Focus on validating functionality with actual measurement scenarios
+- Test new features by applying them to real floor plan data
+- This approach ensures testing reflects real-world usage patterns and data characteristics
 
 ## Recent Feature: Ignore Functionality
 
@@ -225,6 +243,39 @@ When proposing changes or fixes:
 - **Implementation**: Modified `data_loader.py` to filter out ignored rows
 - **Testing**: Created `test_ignore_feature.py` and `test_ignore_simple.py`
 - **Documentation**: Updated README.md with new column format and usage notes
+
+## Recent Feature: Weight Functionality
+
+**Implemented**: Weight column in distances sheet to assign measurement importance
+- **Feature**: Add "Weight" column to distances sheet (6th column)
+- **Usage**: Numeric values (positive) to weight measurement importance in optimization
+- **Implementation**: Modified `data_loader.py` to load weights, `coordinate_estimator.py` to apply weights to both distance errors and line orientation penalties
+- **Default**: Missing values or empty cells default to weight 1.0
+- **Effect**: Higher weights give more importance to that measurement in the optimization
+- **Documentation**: Updated README.md with new column format and usage notes
+
+## Recent Feature: Structural Lines
+
+**Implemented**: Support for structural lines without distance measurements
+- **Feature**: Allow rows with missing distance values but H/V line orientation
+- **Usage**: Add rows with empty Distance column but H/V in Line Orientation column
+- **Purpose**: Enforce horizontal/vertical alignment for walls and structural elements without requiring distance measurements
+- **Implementation**: Modified `data_loader.py` to separate distance measurements from line orientation constraints
+- **Effect**: Structural lines contribute to line orientation penalties but not to distance optimization
+- **Example**: Wall that should be vertical but distance wasn't measured
+- **Documentation**: Updated README.md with structural lines example and usage notes
+
+## Recent Feature: Summary Report
+
+**Implemented**: Summary report generation with specific floor plan statistics
+- **Feature**: Calculate width, length, and area measurements from optimized coordinates
+- **Width measurements**: Distance from A to W, and sum of J-K + L-M + N-O distances
+- **Length measurements**: Distance from A to J, and sum of K-L + M-N + O-W distances
+- **Area calculation**: Area contained within perimeter A-B-C-D-E-F-G-H-I-J-K-L-M3-M4-W-A using shoelace formula
+- **Implementation**: Created `src/summary_calculator.py` with SummaryCalculator class
+- **Output**: Formatted Excel file with proper formatting and units
+- **Integration**: Added to main analysis workflow in `run_analysis.py`
+- **Documentation**: Updated README.md with summary report features and output examples
 
 ---
 

@@ -4,8 +4,9 @@ Basic Analysis Script
 
 This script runs:
 1. Basic coordinate estimation (full optimization)
-2. Enhanced output analysis with Excel formatting
-3. Visualizations (PNG files)
+2. Line orientation constraints (H/V) if specified in data
+3. Enhanced output analysis with Excel formatting
+4. Visualizations (PNG files)
 
 Usage:
     python run_analysis.py [data_file]
@@ -27,6 +28,7 @@ from src.coordinate_estimator import CoordinateEstimator
 from src.output_analyzer import OutputAnalyzer
 from src.visualization import FloorPlanVisualizer
 from src.distance_calculator import DistanceCalculator
+from src.summary_calculator import SummaryCalculator
 
 
 def parse_arguments():
@@ -38,6 +40,7 @@ def parse_arguments():
 Examples:
   %(prog)s                                    # Run with default data file
   %(prog)s data/my_data.xlsx                 # Run with custom data file
+  %(prog)s data/my_data.xlsx --line-weight 5.0  # Increase line constraint weighting
         """
     )
     
@@ -46,6 +49,13 @@ Examples:
         nargs='?', 
         default="data/50_e_1_st_measurements.xlsx",
         help="Path to Excel file with distance measurements and coordinates (default: data/50_e_1_st_measurements.xlsx)"
+    )
+    
+    parser.add_argument(
+        '--line-weight',
+        type=float,
+        default=1.0,
+        help="Weight multiplier for horizontal (H) and vertical (V) line constraints (default: 1.0)"
     )
     
     return parser.parse_args()
@@ -176,9 +186,36 @@ def main():
         # ============================================================================
         print("STEP 3: Running coordinate estimation...")
         
+        # Get line orientations
+        line_orientations = loader.get_line_orientations()
+        
+        # Get weights
+        weights = loader.get_weights()
+        
+        # Count line orientation constraints
+        horizontal_constraints = sum(1 for orient in line_orientations.values() if orient == 'H')
+        vertical_constraints = sum(1 for orient in line_orientations.values() if orient == 'V')
+        
+        print(f"  Line orientation constraints: {horizontal_constraints} horizontal, {vertical_constraints} vertical")
+        print(f"  Line constraint weight multiplier: {args.line_weight}")
+        
+        # Report weight statistics
+        weight_values = list(weights.values())
+        if len(set(weight_values)) > 1:  # If not all weights are the same
+            print(f"  Measurement weights: min={min(weight_values):.2f}, max={max(weight_values):.2f}, mean={np.mean(weight_values):.2f}")
+        else:
+            print(f"  All measurements have equal weight: {weight_values[0]:.2f}")
+        
         # Run full optimization
         print("  Running full optimization...")
-        estimator = CoordinateEstimator(distances, initial_coordinates, fixed_points_info)
+        estimator = CoordinateEstimator(
+            distances, 
+            initial_coordinates, 
+            fixed_points_info, 
+            line_orientations, 
+            line_orientation_weight=args.line_weight,
+            weights=weights
+        )
         result = estimator.optimize()
         
         print(f"    Optimization completed successfully")
@@ -204,6 +241,22 @@ def main():
         
         # Print enhanced summary
         analyzer.print_enhanced_summary(enhanced_distances, enhanced_coordinates)
+        print()
+        
+        # ============================================================================
+        # STEP 4.5: SUMMARY REPORT GENERATION
+        # ============================================================================
+        print("STEP 4.5: Generating summary report...")
+        summary_calculator = SummaryCalculator()
+        summary_report = summary_calculator.generate_summary_report(result['coordinates'])
+        
+        # Save summary report
+        summary_output_file = os.path.join(output_dir, "summary_report.xlsx")
+        summary_calculator.save_summary_report(summary_report, summary_output_file)
+        print(f"  Summary report saved to: {summary_output_file}")
+        
+        # Print summary report
+        summary_calculator.print_summary_report(summary_report)
         print()
         
         # ============================================================================
@@ -244,6 +297,7 @@ def main():
         print()
         print("Files generated:")
         print(f"  - enhanced_analysis.xlsx (Enhanced distance and coordinate analysis)")
+        print(f"  - summary_report.xlsx (Floor plan summary statistics)")
         print(f"  - initial_guess_discrepancies.xlsx (Initial guess analysis)")
         print(f"  - initial_coordinates.png (Initial coordinate visualization)")
         print(f"  - optimized_coordinates.png (Optimized coordinate visualization)")
@@ -254,8 +308,10 @@ def main():
         print(f"  - Final RMS error: {result['error_metrics']['root_mean_square_error']:.6f}")
         print(f"  - Total measurements analyzed: {len(distances)}")
         print(f"  - Total points optimized: {len(result['coordinates'])}")
+        print(f"  - Line constraint weight multiplier: {args.line_weight}")
         print()
         print("Next steps:")
+        print("  - Review summary_report.xlsx for floor plan width, length, and area statistics")
         print("  - Review enhanced_analysis.xlsx for detailed distance and coordinate analysis")
         print("  - Check initial_guess_discrepancies.xlsx to identify problematic initial guesses")
         print("  - Examine visualizations to understand the coordinate optimization results")
